@@ -56,6 +56,22 @@
  * Changed 2003 by Jan Kiefer.
  *
  ************************************************************************/
+ 
+
+******************************************************************************************
+*
+* Changed 2014 by Ivano Irrera, University of Coimbra.
+* Version for ant building
+*
+* *** Broken DB connection (after "maxConn" exceptions thrown) bug solved
+* - corrected: connection creation in emptyCart 
+* - added: con.rollback() when an operation throws an exception (catch block)
+* - added: returnConnection(con) when an operation throws an exception (finalization block)
+*
+******************************************************************************************/
+ 
+
+
 
 import java.io.*;
 import java.net.URL;
@@ -69,6 +85,9 @@ public class TPCW_Database {
 
     static String driverName = "@jdbc.driver@";
     static String jdbcPath = "@jdbc.path@";
+    static String jdbcUsername = "@jdbc.username@";
+    static String jdbcPassword = "@jdbc.password@";
+    
     // Pool of *available* connections.
     static Vector availConn = new Vector(0);
     static int checkedOut = 0;
@@ -113,6 +132,7 @@ public class TPCW_Database {
 	    if (maxConn == 0 || checkedOut < maxConn) {
 		con = getNewConnection();	
 		totalConnections++;
+		System.out.println(totalConnections);
 	    }
 
 	    
@@ -125,18 +145,17 @@ public class TPCW_Database {
     }
     
     // Return a connection to the pool.
-    public static synchronized void returnConnection(Connection con)
-    throws java.sql.SQLException
+    public static synchronized void returnConnection(Connection con) throws java.sql.SQLException
     {	
-	if (!use_connection_pool) {
-	    con.close();
-	} else {
-	    checkedOut--;
-	    availConn.addElement(con);
-	}
+		if (!use_connection_pool) {
+			con.close();
+		} else {
+			checkedOut--;
+			availConn.addElement(con);
+		}
     }
-
-    // Get a new connection to DB2
+	
+    // Get a new connection to DB
     public static Connection getNewConnection() {
 	try {
 	    Class.forName(driverName);
@@ -147,7 +166,7 @@ public class TPCW_Database {
 	    while(true) {
 		try {
 		    //   con = DriverManager.getConnection("jdbc:postgresql://eli.ece.wisc.edu/tpcw", "milo", "");
-		    con = DriverManager.getConnection(jdbcPath);
+		    con = DriverManager.getConnection(jdbcPath, jdbcUsername, jdbcPassword);
 		    break;  
 		} catch (java.sql.SQLException ex) {
 		    System.err.println("Error getting connection: " + 
@@ -167,17 +186,26 @@ public class TPCW_Database {
 	return null;
     }
 
-    public static String[] getName(int c_id) {
+	
+	
+    public static String[] getName(User user, int c_id) {
 	String name[] = new String[2];
+	
+	Connection con = getConnection();
+	if (con == null) {
+		return null;
+	} // else...
 	try {
 	    // Prepare SQL
 	    //	    out.println("About to call getConnection!");
 	    //            out.flush();
-	    Connection con = getConnection();
-	    //	    out.println("About to preparestatement!");
+	    
+		// Connection con = getConnection();
+	    
+		//	    out.println("About to preparestatement!");
 	    //            out.flush();
 	    PreparedStatement get_name = con.prepareStatement
-		(@sql.getName@);
+		(@sql.getName@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
 	    
 	    // Set parameter
 	    get_name.setInt(1, c_id);
@@ -193,20 +221,94 @@ public class TPCW_Database {
 	    rs.close();
 	    get_name.close();
 	    con.commit();
-	    returnConnection(con);
+	    //returnConnection(con);
 	} catch (java.lang.Exception ex) {
 	    ex.printStackTrace();
+		// the commit can not be executed
+		try {con.rollback();} catch (java.lang.Exception excep){excep.printStackTrace();}
+	} finally {
+		try {returnConnection(con);} catch (java.lang.Exception exccon){exccon.printStackTrace();}
 	}
 	return name;
     }
+    
+    public static boolean restore() {
+	boolean result = false;
+	
+	Connection con = getConnection();
+	if (con == null) {
+		return false;
+	} // else...
+	
+	try {
+	    //Connection con = getConnection();
+            Statement st = con.createStatement();
+             
+            System.out.println("_BK_10");
+             
+            st.execute("DROP TABLE ADDRESS"); 
+            st.execute("DROP TABLE AUTHOR");
+            st.execute("DROP TABLE CC_XACTS");
+            st.execute("DROP TABLE COUNTRY");
+            st.execute("DROP TABLE CUSTOMER");
+            st.execute("DROP TABLE ITEM");
+            st.execute("DROP TABLE ORDER_LINE");
+            st.execute("DROP TABLE ORDERS");
+            st.execute("DROP TABLE SHOPPING_CART");
+            st.execute("DROP TABLE SHOPPING_CART_LINE");
 
-    public static Book getBook(int i_id) {
+
+            st.execute("create TABLE ADDRESS as select * from ADDRESS_BACKUP");
+            st.execute("create TABLE AUTHOR as select * from AUTHOR_BACKUP");
+            st.execute("create TABLE CC_XACTS as select * from CC_XACTS_BACKUP");
+            st.execute("create TABLE COUNTRY as select * from COUNTRY_BACKUP");
+            st.execute("create TABLE CUSTOMER as select * from CUSTOMER_BACKUP");
+            st.execute("create TABLE ITEM as select * from  ITEM_BACKUP");
+            st.execute("create TABLE ORDER_LINE as select * from  ORDER_LINE_BACKUP");
+            st.execute("create TABLE ORDERS as select * from ORDERS_BACKUP");
+            st.execute("create TABLE SHOPPING_CART as select * from SHOPPING_CART_BACKUP");
+            st.execute("create TABLE SHOPPING_CART_LINE as select * from SHOPPING_CART_LINE_BACKUP");
+ 
+
+            st.execute("create index author_a_lname on author(a_lname)");
+            st.execute("create index address_addr_co_id on address(addr_co_id)");
+            st.execute("create index addr_zip on address(addr_zip)");
+            st.execute("create index customer_c_addr_id on customer(c_addr_id)");
+            st.execute("create index customer_c_uname on customer(c_uname)");
+            st.execute("create index item_i_title on item(i_title)");
+            st.execute("create index item_i_subject on item(i_subject)");
+            st.execute("create index item_i_a_id on item(i_a_id)");
+            st.execute("create index order_line_ol_i_id on order_line(ol_i_id)");
+            st.execute("create index order_line_ol_o_id on order_line(ol_o_id)");
+            st.execute("create index country_co_name on country(co_name)");
+            st.execute("create index orders_o_c_id on orders(o_c_id)");
+            st.execute("create index scl_i_id on shopping_cart_line(scl_i_id)");
+ 
+            System.out.println("// _BK_10");
+            st.close();
+	    con.commit();
+	    // returnConnection(con);
+            result = true;
+	} catch (java.lang.Exception ex) {
+	    ex.printStackTrace();
+		try {con.rollback();} catch (java.lang.Exception excep){excep.printStackTrace();}
+	} finally {
+		try {returnConnection(con);} catch (java.lang.Exception exccon){exccon.printStackTrace();}
+	}
+	return result;
+    }
+
+    public static Book getBook(User user, int i_id) {
 	Book book = null;
+	Connection con = getConnection();
+	if (con == null) {
+		return null;
+	} // else...
 	try {
 	    // Prepare SQL
-	    Connection con = getConnection();
+	    //Connection con = getConnection();
 	    PreparedStatement statement = con.prepareStatement
-		(@sql.getBook@);
+		(@sql.getBook@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
 	    
 	    // Set parameter
 	    statement.setInt(1, i_id);
@@ -218,20 +320,27 @@ public class TPCW_Database {
 	    rs.close();
 	    statement.close();
 	    con.commit();
-	    returnConnection(con);
+	    //returnConnection(con);
 	} catch (java.lang.Exception ex) {
 	    ex.printStackTrace();
+		try {con.rollback();} catch (java.lang.Exception excep){excep.printStackTrace();}
+	} finally {
+		try {returnConnection(con);} catch (java.lang.Exception exccon){exccon.printStackTrace();}
 	}
 	return book;
     }
 
-    public static Customer getCustomer(String UNAME){
+    public static Customer getCustomer(User user, String UNAME){
 	Customer cust = null;
+	Connection con = getConnection();
+	if (con == null) {
+		return null;
+	} // else...	
 	try {
 	    // Prepare SQL
-	    Connection con = getConnection();
+	    //Connection con = getConnection();
 	    PreparedStatement statement = con.prepareStatement
-		(@sql.getCustomer@);
+		(@sql.getCustomer@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
 	    
 	    // Set parameter
 	    statement.setString(1, UNAME);
@@ -250,20 +359,27 @@ public class TPCW_Database {
 	    
 	    statement.close();
 	    con.commit();
-	    returnConnection(con);
+	    //returnConnection(con);
 	} catch (java.lang.Exception ex) {
 	    ex.printStackTrace();
+		try {con.rollback();} catch (java.lang.Exception excep){excep.printStackTrace();}
+	} finally {
+		try {returnConnection(con);} catch (java.lang.Exception exccon){exccon.printStackTrace();}
 	}
 	return cust;
     }
 
-    public static Vector doSubjectSearch(String search_key) {
+    public static Vector doSubjectSearch(User user, String search_key) {
 	Vector vec = new Vector();
+	Connection con = getConnection();
+	if (con == null) {
+		return null;
+	} // else...
 	try {
 	    // Prepare SQL
-	    Connection con = getConnection();
+	    //Connection con = getConnection();
 	    PreparedStatement statement = con.prepareStatement
-		(@sql.doSubjectSearch@);
+		(@sql.doSubjectSearch@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
 	    
 	    // Set parameter
 	    statement.setString(1, search_key);
@@ -276,20 +392,27 @@ public class TPCW_Database {
 	    rs.close();
 	    statement.close();
 	    con.commit();
-	    returnConnection(con);
+	    //returnConnection(con);
 	} catch (java.lang.Exception ex) {
 	    ex.printStackTrace();
+		try {con.rollback();} catch (java.lang.Exception excep){excep.printStackTrace();}
+	} finally {
+		try {returnConnection(con);} catch (java.lang.Exception exccon){exccon.printStackTrace();}
 	}
 	return vec;	
     }
 
-    public static Vector doTitleSearch(String search_key) {
+    public static Vector doTitleSearch(User user, String search_key) {
 	Vector vec = new Vector();
+	Connection con = getConnection();
+	if (con == null) {
+		return null;
+	} // else...
 	try {
 	    // Prepare SQL
-	    Connection con = getConnection();
+	    //Connection con = getConnection();
 	    PreparedStatement statement = con.prepareStatement
-		(@sql.doTitleSearch@);
+		(@sql.doTitleSearch@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
 	    
 	    // Set parameter
 	    statement.setString(1, search_key+"%");
@@ -302,20 +425,27 @@ public class TPCW_Database {
 	    rs.close();
 	    statement.close();
 	    con.commit();
-	    returnConnection(con);
+	    //returnConnection(con);
 	} catch (java.lang.Exception ex) {
 	    ex.printStackTrace();
+		try {con.rollback();} catch (java.lang.Exception excep){excep.printStackTrace();}
+	} finally {
+		try {returnConnection(con);} catch (java.lang.Exception exccon){exccon.printStackTrace();}
 	}
 	return vec;	
     }
 
-    public static Vector doAuthorSearch(String search_key) {
+    public static Vector doAuthorSearch(User user, String search_key) {
 	Vector vec = new Vector();
+	Connection con = getConnection();
+	if (con == null) {
+		return null;
+	} // else...
 	try {
 	    // Prepare SQL
-	    Connection con = getConnection();
+	    //Connection con = getConnection();
 	    PreparedStatement statement = con.prepareStatement
-		(@sql.doAuthorSearch@);
+		(@sql.doAuthorSearch@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
 
 	    // Set parameter
 	    statement.setString(1, search_key+"%");
@@ -328,20 +458,27 @@ public class TPCW_Database {
 	    rs.close();
 	    statement.close();
 	    con.commit();
-	    returnConnection(con);
+	    //returnConnection(con);
 	} catch (java.lang.Exception ex) {
 	    ex.printStackTrace();
+		try {con.rollback();} catch (java.lang.Exception excep){excep.printStackTrace();}
+	} finally {
+		try {returnConnection(con);} catch (java.lang.Exception exccon){exccon.printStackTrace();}
 	}
 	return vec;	
     }
 
-    public static Vector getNewProducts(String subject) {
+    public static Vector getNewProducts(User user, String subject) {
 	Vector vec = new Vector();  // Vector of Books
+	Connection con = getConnection();
+	if (con == null) {
+		return null;
+	} // else...
 	try {
 	    // Prepare SQL
-	    Connection con = getConnection();
+	    //Connection con = getConnection();
 	    PreparedStatement statement = con.prepareStatement
-		(@sql.getNewProducts@);
+		(@sql.getNewProducts@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
 
 	    // Set parameter
 	    statement.setString(1, subject);
@@ -354,24 +491,31 @@ public class TPCW_Database {
 	    rs.close();
 	    statement.close();
 	    con.commit();
-	    returnConnection(con);
+	    //returnConnection(con);
 	} catch (java.lang.Exception ex) {
 	    ex.printStackTrace();
+		try {con.rollback();} catch (java.lang.Exception excep){excep.printStackTrace();}
+	} finally {
+		try {returnConnection(con);} catch (java.lang.Exception exccon){exccon.printStackTrace();}
 	}
 	return vec;	
     }
 
-    public static Vector getBestSellers(String subject) {
+    public static Vector getBestSellers(User user, String subject) {
 	Vector vec = new Vector();  // Vector of Books
+	Connection con = getConnection();
+	if (con == null) {
+		return null;
+	} // else...
 	try {
 	    // Prepare SQL
-	    Connection con = getConnection();
+	    //Connection con = getConnection();
 	    //The following is the original, unoptimized best sellers query.
 	    PreparedStatement statement = con.prepareStatement
-		(@sql.getBestSellers@);
+		(@sql.getBestSellers@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
 	    //This is Mikko's optimized version, which depends on the fact that
 	    //A table named "bestseller" has been created.
-	    /*PreparedStatement statement = con.prepareStatement
+	    /*PreparedStatement statement = con.preparestatement
 		("SELECT bestseller.i_id, i_title, a_fname, a_lname, ol_qty " + 
 		 "FROM item, bestseller, author WHERE item.i_subject = ?" +
 		 " AND item.i_id = bestseller.i_id AND item.i_a_id = author.a_id " + 
@@ -388,19 +532,26 @@ public class TPCW_Database {
 	    rs.close();
 	    statement.close();
 	    con.commit();
-	    returnConnection(con);
+	    //returnConnection(con);
 	} catch (java.lang.Exception ex) {
 	    ex.printStackTrace();
+		try {con.rollback();} catch (java.lang.Exception excep){excep.printStackTrace();}
+	} finally {
+		try {returnConnection(con);} catch (java.lang.Exception exccon){exccon.printStackTrace();}
 	}
 	return vec;	
     }
 
-    public static void getRelated(int i_id, Vector i_id_vec, Vector i_thumbnail_vec) {
+    public static void getRelated(User user, int i_id, Vector i_id_vec, Vector i_thumbnail_vec) {
+	Connection con = getConnection();
+	if (con == null) {
+		return;
+	} // else...
 	try {
 	    // Prepare SQL
-	    Connection con = getConnection();
+	    //Connection con = getConnection();
 	    PreparedStatement statement = con.prepareStatement
-		(@sql.getRelated@);
+		(@sql.getRelated@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
 
 	    // Set parameter
 	    statement.setInt(1, i_id);
@@ -418,18 +569,25 @@ public class TPCW_Database {
 	    rs.close();
 	    statement.close();
 	    con.commit();
-	    returnConnection(con);
+	    //returnConnection(con);
 	} catch (java.lang.Exception ex) {
 	    ex.printStackTrace();
+		try {con.rollback();} catch (java.lang.Exception excep){excep.printStackTrace();}
+	} finally {
+		try {returnConnection(con);} catch (java.lang.Exception exccon){exccon.printStackTrace();}
 	}
     }
 
-    public static void adminUpdate(int i_id, double cost, String image, String thumbnail) {
+    public static void adminUpdate(User user, int i_id, double cost, String image, String thumbnail) {
+	Connection con = getConnection();
+	if (con == null) {
+		return;
+	} // else...
 	try {
 	    // Prepare SQL
-	    Connection con = getConnection();
+	    //Connection con = getConnection();
 	    PreparedStatement statement = con.prepareStatement
-		(@sql.adminUpdate@);
+		(@sql.adminUpdate@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
 
 	    // Set parameter
 	    statement.setDouble(1, cost);
@@ -439,7 +597,7 @@ public class TPCW_Database {
 	    statement.executeUpdate();
 	    statement.close();
 	    PreparedStatement related = con.prepareStatement
-		(@sql.adminUpdate.related@);
+		(@sql.adminUpdate.related@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
 
 	    // Set parameter
 	    related.setInt(1, i_id);	
@@ -467,7 +625,7 @@ public class TPCW_Database {
 	    {
 		// Prepare SQL
 		statement = con.prepareStatement
-		    (@sql.adminUpdate.related1@);
+		    (@sql.adminUpdate.related1@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
 		
 		// Set parameter
 		statement.setInt(1, related_items[0]);
@@ -480,498 +638,560 @@ public class TPCW_Database {
 	    }
 	    statement.close();
 	    con.commit();
-	    returnConnection(con);
+	    //returnConnection(con);
 	} catch (java.lang.Exception ex) {
 	    ex.printStackTrace();
-	}	
+		try {con.rollback();} catch (java.lang.Exception excep){excep.printStackTrace();}
+	} finally {
+		try {returnConnection(con);} catch (java.lang.Exception exccon){exccon.printStackTrace();}
+	}
     }
 
-    public static String GetUserName(int C_ID){
-	String u_name = null;
-	try {
-	    // Prepare SQL
-	    Connection con = getConnection();
-	    PreparedStatement get_user_name = con.prepareStatement
-		(@sql.getUserName@);
-	    
-	    // Set parameter
-	    get_user_name.setInt(1, C_ID);
-	    ResultSet rs = get_user_name.executeQuery();
-	    
-	    // Results
-	    rs.next();
-	    u_name = rs.getString("c_uname");
-	    rs.close();
+    public static String GetUserName(User user, int C_ID){
+		String u_name = null;
+		Connection con = getConnection();
+		if (con == null) {
+			return null;
+		} // else...
+		try {
+			// Prepare SQL
+			//Connection con = getConnection();
+			PreparedStatement get_user_name = con.prepareStatement
+			(@sql.getUserName@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
+			
+			// Set parameter
+			get_user_name.setInt(1, C_ID);
+			ResultSet rs = get_user_name.executeQuery();
+			
+			// Results
+			rs.next();
+			u_name = rs.getString("c_uname");
+			rs.close();
 
-	    get_user_name.close();
-	    con.commit();
-	    returnConnection(con);
-	} catch (java.lang.Exception ex) {
-	    ex.printStackTrace();
-	}
-	return u_name;
+			get_user_name.close();
+			con.commit();
+			//returnConnection(con);
+		} catch (java.lang.Exception ex) {
+			ex.printStackTrace();
+			try {con.rollback();} catch (java.lang.Exception excep){excep.printStackTrace();}
+		} finally {
+			try {returnConnection(con);} catch (java.lang.Exception exccon){exccon.printStackTrace();}
+		}
+		return u_name;
     }
 
-    public static String GetPassword(String C_UNAME){
-	String passwd = null;
-	try {
-	    // Prepare SQL
-	    Connection con = getConnection();
-	    PreparedStatement get_passwd = con.prepareStatement
-		(@sql.getPassword@);
-	    
-	    // Set parameter
-	    get_passwd.setString(1, C_UNAME);
-	    ResultSet rs = get_passwd.executeQuery();
-	    
-	    // Results
-	    rs.next();
-	    passwd = rs.getString("c_passwd");
-	    rs.close();
+    public static String GetPassword(User user, String C_UNAME){
+		String passwd = null;
+		Connection con = getConnection();
+		if (con == null) {
+			return null;
+		} // else...
+		try {
+			// Prepare SQL
+			//Connection con = getConnection();
+			PreparedStatement get_passwd = con.prepareStatement
+			(@sql.getPassword@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
+			
+			// Set parameter
+			get_passwd.setString(1, C_UNAME);
+			ResultSet rs = get_passwd.executeQuery();
+			
+			// Results
+			rs.next();
+			passwd = rs.getString("c_passwd");
+			rs.close();
 
-	    get_passwd.close();
-	    con.commit();
-	    returnConnection(con);
-	} catch (java.lang.Exception ex) {
-	    ex.printStackTrace();
-	}
-	return passwd;
+			get_passwd.close();
+			con.commit();
+			// returnConnection(con);
+		} catch (java.lang.Exception ex) {
+			// returnConnection(con);
+			ex.printStackTrace();
+			try {con.rollback();} catch (java.lang.Exception excep){excep.printStackTrace();}
+		} finally {
+			try {returnConnection(con);} catch (java.lang.Exception exccon){exccon.printStackTrace();}
+		}
+		return passwd;
     }
 
     //This function gets the value of I_RELATED1 for the row of
     //the item table corresponding to I_ID
-    private static int getRelated1(int I_ID, Connection con){
-	int related1 = -1;
-	try {
-	    PreparedStatement statement = con.prepareStatement
-		(@sql.getRelated1@);
-	    statement.setInt(1, I_ID);
-	    ResultSet rs = statement.executeQuery();
-	    rs.next();
-	    related1 = rs.getInt(1);//Is 1 the correct index?
-	    rs.close();
-	    statement.close();
-	    
-	}catch (java.lang.Exception ex) {
-	    ex.printStackTrace();
-	}
-	return related1;
+    private static int getRelated1(User user, int I_ID, Connection con){
+		int related1 = -1;
+		try {
+			PreparedStatement statement = con.prepareStatement
+			(@sql.getRelated1@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
+			statement.setInt(1, I_ID);
+			ResultSet rs = statement.executeQuery();
+			rs.next();
+			related1 = rs.getInt(1);//Is 1 the correct index?
+			rs.close();
+			statement.close();
+			
+		} catch (java.lang.Exception ex) {
+			ex.printStackTrace();
+		}
+		return related1;
     }
 
-    public static Order GetMostRecentOrder(String c_uname, Vector order_lines){
+    public static Order GetMostRecentOrder(User user, String c_uname, Vector order_lines){
+	Connection con = getConnection();
+	if (con == null) {
+		return null;
+	} // else...
 	try {
-	    order_lines.removeAllElements();
-	    int order_id;
-	    Order order;
+			order_lines.removeAllElements();
+			int order_id;
+			Order order;
 
-	    // Prepare SQL
-	    Connection con = getConnection();
+			// Prepare SQL
+			//Connection con = getConnection();
 
-	    //	    System.out.println("cust_id: " + getCustomer(c_uname).c_id);
+			//	    System.out.println("cust_id: " + getCustomer(c_uname).c_id);
+			{
+				// *** Get the o_id of the most recent order for this user
+				PreparedStatement get_most_recent_order_id = con.prepareStatement
+					(@sql.getMostRecentOrder.id@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
+				
+				// Set parameter
+				get_most_recent_order_id.setString(1, c_uname);
+				ResultSet rs = get_most_recent_order_id.executeQuery();
+				
+				if (rs.next()) {
+					order_id = rs.getInt("o_id");
+				} else {
+					// There is no most recent order
+					rs.close();
+					get_most_recent_order_id.close();
+					con.commit();
+					returnConnection(con);
+					return null;
+				}
+				rs.close();
+				get_most_recent_order_id.close();
+			}
+			{
+				// *** Get the order info for this o_id
+				PreparedStatement get_order = con.prepareStatement
+					(@sql.getMostRecentOrder.order@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
+				
+				// Set parameter
+				get_order.setInt(1, order_id);
+				ResultSet rs2 = get_order.executeQuery();
+				
+				// Results
+				if (!rs2.next()) {
+					// FIXME - This case is due to an error due to a database population error
+					con.commit();
+					rs2.close();
+					//		    get_order.close();
+					returnConnection(con);
+					return null;
+				}
+				order = new Order(rs2);
+				rs2.close();
+				get_order.close();
+			}
 
-	    {
-		// *** Get the o_id of the most recent order for this user
-		PreparedStatement get_most_recent_order_id = con.prepareStatement
-		    (@sql.getMostRecentOrder.id@);
-		
-		// Set parameter
-		get_most_recent_order_id.setString(1, c_uname);
-		ResultSet rs = get_most_recent_order_id.executeQuery();
-		
-		if (rs.next()) {
-		    order_id = rs.getInt("o_id");
-		} else {
-		    // There is no most recent order
-		    rs.close();
-		    get_most_recent_order_id.close();
-		    con.commit();
-		    returnConnection(con);
-		    return null;
-		}
-		rs.close();
-		get_most_recent_order_id.close();
-	    }
-	    
-	    {
-		// *** Get the order info for this o_id
-		PreparedStatement get_order = con.prepareStatement
-		    (@sql.getMostRecentOrder.order@);
-		
-		// Set parameter
-		get_order.setInt(1, order_id);
-		ResultSet rs2 = get_order.executeQuery();
-		
-		// Results
-		if (!rs2.next()) {
-		    // FIXME - This case is due to an error due to a database population error
-		    con.commit();
-		    rs2.close();
-		    //		    get_order.close();
-		    returnConnection(con);
-		    return null;
-		}
-		order = new Order(rs2);
-		rs2.close();
-		get_order.close();
-	    }
-
-	    {
-		// *** Get the order_lines for this o_id
-		PreparedStatement get_order_lines = con.prepareStatement
-		    (@sql.getMostRecentOrder.lines@);
-		
-		// Set parameter
-		get_order_lines.setInt(1, order_id);
-		ResultSet rs3 = get_order_lines.executeQuery();
-		
-		// Results
-		while(rs3.next()) {
-		    order_lines.addElement(new OrderLine(rs3));
-		}
-		rs3.close();
-		get_order_lines.close();
-	    }
-  
+			{
+				// *** Get the order_lines for this o_id
+				PreparedStatement get_order_lines = con.prepareStatement
+					(@sql.getMostRecentOrder.lines@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
+				
+				// Set parameter
+				get_order_lines.setInt(1, order_id);
+				ResultSet rs3 = get_order_lines.executeQuery();
+				
+				// Results
+				while(rs3.next()) {
+					order_lines.addElement(new OrderLine(rs3));
+				}
+				rs3.close();
+				get_order_lines.close();
+			}
 	    con.commit();
 	    returnConnection(con);
 	    return order;
 	} catch (java.lang.Exception ex) {
 	    ex.printStackTrace();
-	}
+		try {con.rollback();} catch (java.lang.Exception excep){excep.printStackTrace();}
+		try {returnConnection(con);} catch (java.lang.Exception exccon){exccon.printStackTrace();}
+	} 
 	return null;
     }
 
     // ********************** Shopping Cart code below ************************* 
 
     // Called from: TPCW_shopping_cart_interaction 
-    public static int createEmptyCart(){
-	int SHOPPING_ID = 0;
-	//	boolean success = false;
-	Connection con = null;
-	try {
-	    con = getConnection();
-	}
-	catch (java.lang.Exception ex) {
-	    ex.printStackTrace();
-	}
-	
-	//while(success == false) {
-	try {
-	    PreparedStatement get_next_id = con.prepareStatement
-		(@sql.createEmptyCart@);
-	    synchronized(Cart.class) {
-		ResultSet rs = get_next_id.executeQuery();
-		rs.next();
-		SHOPPING_ID = rs.getInt(1);
-		rs.close();
+    public static int createEmptyCart(User user){
+		int SHOPPING_ID = 0;
+		//	boolean success = false;
+		Connection con = null;
+		try {
+			con = getConnection();
+		}
+		catch (java.lang.Exception ex) {
+			ex.printStackTrace();
+			return 0;
+		}
 		
-		PreparedStatement insert_cart = con.prepareStatement
-		    (@sql.createEmptyCart.insert@);
-		insert_cart.executeUpdate();
-		get_next_id.close();
-		con.commit();
-	    }
-	    returnConnection(con);
-	}catch (java.lang.Exception ex) {
-	    ex.printStackTrace();
+		//while(success == false) {
+		try {
+			PreparedStatement get_next_id = con.prepareStatement
+			(@sql.createEmptyCart@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
+			synchronized(Cart.class) {
+				ResultSet rs = get_next_id.executeQuery();
+				rs.next();
+				SHOPPING_ID = rs.getInt(1);
+				rs.close();
+				
+				PreparedStatement insert_cart = con.prepareStatement
+					(@sql.createEmptyCart.insert@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
+				insert_cart.executeUpdate();
+				get_next_id.close();
+				con.commit();
+			}
+			//returnConnection(con);
+		} catch (java.lang.Exception ex) {
+			ex.printStackTrace();
+			try {con.rollback();} catch (java.lang.Exception excep){excep.printStackTrace();}
+		} finally {
+			try {returnConnection(con);} catch (java.lang.Exception exccon){exccon.printStackTrace();}
+		}
+		return SHOPPING_ID;
 	}
-	return SHOPPING_ID;
-    }
     
-    public static Cart doCart(int SHOPPING_ID, Integer I_ID, Vector ids, Vector quantities) {	
-	Cart cart = null;
-	try {
-	    Connection con = getConnection();
-	    
-	    if (I_ID != null) {
-		addItem(con, SHOPPING_ID, I_ID.intValue()); 
-	    }
-	    refreshCart(con, SHOPPING_ID, ids, quantities);
-	    addRandomItemToCartIfNecessary(con, SHOPPING_ID);
-	    resetCartTime(con, SHOPPING_ID);
-	    cart = TPCW_Database.getCart(con, SHOPPING_ID, 0.0);
-	    
-	    // Close connection
-	    con.commit();
-	    returnConnection(con);
-	} catch (java.lang.Exception ex) {
-	    ex.printStackTrace();
-	}
-	return cart;
+    public static Cart doCart(User user, int SHOPPING_ID, Integer I_ID, Vector ids, Vector quantities) {	
+		Cart cart = null;
+		Connection con = getConnection();
+		if (con == null) {
+			return null;
+		} // else...
+		try {
+			//Connection con = getConnection();
+			
+			if (I_ID != null) {
+			addItem(user, con, SHOPPING_ID, I_ID.intValue()); 
+			}
+			refreshCart(user, con, SHOPPING_ID, ids, quantities);
+			addRandomItemToCartIfNecessary(user, con, SHOPPING_ID);
+			resetCartTime(user, con, SHOPPING_ID);
+			cart = TPCW_Database.getCart(user, con, SHOPPING_ID, 0.0);
+			
+			// Close connection
+			con.commit();
+			//returnConnection(con);
+		} catch (java.lang.Exception ex) {
+			ex.printStackTrace();
+			try {con.rollback();} catch (java.lang.Exception excep){excep.printStackTrace();}
+		} finally {
+			try {returnConnection(con);} catch (java.lang.Exception exccon){exccon.printStackTrace();}
+		}
+		return cart;
     }
 
     //This function finds the shopping cart item associated with SHOPPING_ID
     //and I_ID. If the item does not already exist, we create one with QTY=1,
     //otherwise we increment the quantity.
 
-    private static void addItem(Connection con, int SHOPPING_ID, int I_ID){
-	try {
-	    // Prepare SQL
-	    PreparedStatement find_entry = con.prepareStatement
-		(@sql.addItem@);
-	    
-	    // Set parameter
-	    find_entry.setInt(1, SHOPPING_ID);
-	    find_entry.setInt(2, I_ID);
-	    ResultSet rs = find_entry.executeQuery();
-	    
-	    // Results
-	    if(rs.next()) {
-		//The shopping cart id, item pair were already in the table
-		int currqty = rs.getInt("scl_qty");
-		currqty+=1;
-		PreparedStatement update_qty = con.prepareStatement
-		(@sql.addItem.update@);
-		update_qty.setInt(1, currqty);
-		update_qty.setInt(2, SHOPPING_ID);
-		update_qty.setInt(3, I_ID);
-		update_qty.executeUpdate();
-		update_qty.close();
-	    } else {//We need to add a new row to the table.
-		
-		//Stick the item info in a new shopping_cart_line
-		PreparedStatement put_line = con.prepareStatement
-		    (@sql.addItem.put@);
-		put_line.setInt(1, SHOPPING_ID);
-		put_line.setInt(2, 1);
-		put_line.setInt(3, I_ID);
-		put_line.executeUpdate();
-		put_line.close();
-	    }
-	    rs.close();
-	    find_entry.close();
-	} catch (java.lang.Exception ex) {
-	    ex.printStackTrace();
-	}
-    }
-
-    private static void refreshCart(Connection con, int SHOPPING_ID, Vector ids, 
-				    Vector quantities){
-	int i;
-	try {
-	    for(i = 0; i < ids.size(); i++){
-		String I_IDstr = (String) ids.elementAt(i);
-		String QTYstr = (String) quantities.elementAt(i);
-		int I_ID = Integer.parseInt(I_IDstr);
-		int QTY = Integer.parseInt(QTYstr);
-		
-		if(QTY == 0) { // We need to remove the item from the cart
-		    PreparedStatement statement = con.prepareStatement
-			(@sql.refreshCart.remove@);
-		    statement.setInt(1, SHOPPING_ID);
-		    statement.setInt(2, I_ID);
-		    statement.executeUpdate();
-		    statement.close();
-   		} 
-		else { //we update the quantity
-		    PreparedStatement statement = con.prepareStatement
-			(@sql.refreshCart.update@);
-		    statement.setInt(1, QTY);
-		    statement.setInt(2, SHOPPING_ID);
-		    statement.setInt(3, I_ID);
-		    statement.executeUpdate(); 
-		    statement.close();
+    private static void addItem(User user, Connection con, int SHOPPING_ID, int I_ID){
+		try {
+			// Prepare SQL
+			PreparedStatement find_entry = con.prepareStatement
+			(@sql.addItem@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
+			
+			// Set parameter
+			find_entry.setInt(1, SHOPPING_ID);
+			find_entry.setInt(2, I_ID);
+			ResultSet rs = find_entry.executeQuery();
+			
+			// Results
+			if(rs.next()) {
+			//The shopping cart id, item pair were already in the table
+			int currqty = rs.getInt("scl_qty");
+			currqty+=1;
+			PreparedStatement update_qty = con.prepareStatement
+			(@sql.addItem.update@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
+			update_qty.setInt(1, currqty);
+			update_qty.setInt(2, SHOPPING_ID);
+			update_qty.setInt(3, I_ID);
+			update_qty.executeUpdate();
+			update_qty.close();
+			} else {//We need to add a new row to the table.
+			
+			//Stick the item info in a new shopping_cart_line
+			PreparedStatement put_line = con.prepareStatement
+				(@sql.addItem.put@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
+			put_line.setInt(1, SHOPPING_ID);
+			put_line.setInt(2, 1);
+			put_line.setInt(3, I_ID);
+			put_line.executeUpdate();
+			put_line.close();
+			}
+			rs.close();
+			find_entry.close();
+		} catch (java.lang.Exception ex) {
+			ex.printStackTrace();
 		}
-	    }
-	} catch (java.lang.Exception ex) {
-	    ex.printStackTrace();
-	}
     }
 
-    private static void addRandomItemToCartIfNecessary(Connection con, int SHOPPING_ID){
-	// check and see if the cart is empty. If it's not, we do
-	// nothing.
-	int related_item = 0;
-	
-	try {
-	    // Check to see if the cart is empty
-	    PreparedStatement get_cart = con.prepareStatement
-		(@sql.addRandomItemToCartIfNecessary@);
-	    get_cart.setInt(1, SHOPPING_ID);
-	    ResultSet rs = get_cart.executeQuery();
-	    rs.next();
-	    if (rs.getInt(1) == 0) {
-		// Cart is empty
-		int rand_id = TPCW_Util.getRandomI_ID();
-		related_item = getRelated1(rand_id,con);
-		addItem(con, SHOPPING_ID, related_item);
-	    }
-	    
-	    rs.close();
-	    get_cart.close();
-	}catch (java.lang.Exception ex) {
-	    ex.printStackTrace();
-	    System.out.println("Adding entry to shopping cart failed: shopping id = " + SHOPPING_ID + " related_item = " + related_item);
-	}
+    private static void refreshCart(User user, Connection con, int SHOPPING_ID, Vector ids, Vector quantities){
+		int i;
+		try 
+		{
+			for(i = 0; i < ids.size(); i++){
+			String I_IDstr = (String) ids.elementAt(i);
+			String QTYstr = (String) quantities.elementAt(i);
+			int I_ID = Integer.parseInt(I_IDstr);
+			int QTY = Integer.parseInt(QTYstr);
+			
+			if(QTY == 0) { // We need to remove the item from the cart
+				PreparedStatement statement = con.prepareStatement
+				(@sql.refreshCart.remove@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
+				statement.setInt(1, SHOPPING_ID);
+				statement.setInt(2, I_ID);
+				statement.executeUpdate();
+				statement.close();
+			} 
+			else { //we update the quantity
+				PreparedStatement statement = con.prepareStatement
+				(@sql.refreshCart.update@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
+				statement.setInt(1, QTY);
+				statement.setInt(2, SHOPPING_ID);
+				statement.setInt(3, I_ID);
+				statement.executeUpdate(); 
+				statement.close();
+			}
+		}
+		} catch (java.lang.Exception ex) {
+			ex.printStackTrace();
+		}
+    }
+
+    private static void addRandomItemToCartIfNecessary(User user, Connection con, int SHOPPING_ID){
+		// check and see if the cart is empty. If it's not, we do
+		// nothing.
+		int related_item = 0;
+		
+		try {
+			// Check to see if the cart is empty
+			PreparedStatement get_cart = con.prepareStatement
+			(@sql.addRandomItemToCartIfNecessary@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
+			get_cart.setInt(1, SHOPPING_ID);
+			ResultSet rs = get_cart.executeQuery();
+			rs.next();
+			if (rs.getInt(1) == 0) {
+			// Cart is empty
+			int rand_id = TPCW_Util.getRandomI_ID();
+			related_item = getRelated1(user, rand_id,con);
+			addItem(user, con, SHOPPING_ID, related_item);
+			}
+			
+			rs.close();
+			get_cart.close();
+		} catch (java.lang.Exception ex) {
+			ex.printStackTrace();
+			System.out.println("Adding entry to shopping cart failed: shopping id = " + SHOPPING_ID + " related_item = " + related_item);
+		}
     }
 
 
     // Only called from this class 
-    private static void resetCartTime(Connection con, int SHOPPING_ID){
-	try {
-	    PreparedStatement statement = con.prepareStatement
-		(@sql.resetCartTime@);
-	
-	    // Set parameter
-	    statement.setInt(1, SHOPPING_ID);
-	    statement.executeUpdate();
-	    statement.close();
-	}catch (java.lang.Exception ex) {
-	    ex.printStackTrace();
+    private static void resetCartTime(User user, Connection con, int SHOPPING_ID){
+		try 
+		{
+			PreparedStatement statement = con.prepareStatement
+			(@sql.resetCartTime@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
+		
+			// Set parameter
+			statement.setInt(1, SHOPPING_ID);
+			statement.executeUpdate();
+			statement.close();
+		} catch (java.lang.Exception ex) {
+			ex.printStackTrace();
+		}
 	}
-    }
 
-    public static Cart getCart(int SHOPPING_ID, double c_discount) {
-	Cart mycart = null;
-	try {
-	    Connection con = getConnection();
-	    mycart = getCart(con, SHOPPING_ID, c_discount);
-	    con.commit();
-	    returnConnection(con);
-	}catch (java.lang.Exception ex) {
-	    ex.printStackTrace();
-	}
-	return mycart;
+    public static Cart getCart(User user, int SHOPPING_ID, double c_discount) {
+		Cart mycart = null;
+		Connection con = getConnection();
+		if (con == null) {
+			return null;
+		} // else...
+		try {
+			//Connection con = getConnection();
+			mycart = getCart(user, con, SHOPPING_ID, c_discount);
+			con.commit();
+			//returnConnection(con);
+		} catch (java.lang.Exception ex) {
+			ex.printStackTrace();
+			try {con.rollback();} catch (java.lang.Exception excep){excep.printStackTrace();}
+		} finally {
+			try {returnConnection(con);} catch (java.lang.Exception exccon){exccon.printStackTrace();}
+		}
+		return mycart;
     }
 
     //time .05s
-    private static Cart getCart(Connection con, int SHOPPING_ID, double c_discount){
-	Cart mycart = null;
-	try {
-	    PreparedStatement get_cart = con.prepareStatement
-		(@sql.getCart@);
-	    get_cart.setInt(1, SHOPPING_ID);
-	    ResultSet rs = get_cart.executeQuery();
-	    mycart = new Cart(rs, c_discount);
-	    rs.close();
-	    get_cart.close();
-	}catch (java.lang.Exception ex) {
-	    ex.printStackTrace();
-	}
-	return mycart;
+    private static Cart getCart(User user, Connection con, int SHOPPING_ID, double c_discount){
+		Cart mycart = null;
+		try {
+			PreparedStatement get_cart = con.prepareStatement
+			(@sql.getCart@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
+			get_cart.setInt(1, SHOPPING_ID);
+			ResultSet rs = get_cart.executeQuery();
+			mycart = new Cart(rs, c_discount);
+			rs.close();
+			get_cart.close();
+		}catch (java.lang.Exception ex) {
+			ex.printStackTrace();
+		}
+		return mycart;
     }
 
     // ************** Customer / Order code below ************************* 
 
     //This should probably return an error code if the customer
     //doesn't exist, but ...
-    public static void refreshSession(int C_ID) {
-	try {
-	    // Prepare SQL
-	    Connection con = getConnection();
-	    PreparedStatement updateLogin = con.prepareStatement
-		(@sql.refreshSession@);
-	    
-	    // Set parameter
-	    updateLogin.setInt(1, C_ID);
-	    updateLogin.executeUpdate();
-	    
-	    con.commit();
-	    updateLogin.close();
-	    returnConnection(con);
-	} catch (java.lang.Exception ex) {
-	    ex.printStackTrace();
-	}
+    public static void refreshSession(User user, int C_ID) {Cart cart = null;
+		Connection con = getConnection();
+		if (con == null) {
+			return;
+		} // else...
+		try { 
+			// Prepare SQL
+			//Connection con = getConnection();
+			PreparedStatement updateLogin = con.prepareStatement
+			(@sql.refreshSession@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
+			
+			// Set parameter
+			updateLogin.setInt(1, C_ID);
+			updateLogin.executeUpdate();
+			
+			con.commit();
+			updateLogin.close();
+			//returnConnection(con);
+		} catch (java.lang.Exception ex) {
+			ex.printStackTrace();
+			try {con.rollback();} catch (java.lang.Exception excep){excep.printStackTrace();}
+		} finally {
+			try {returnConnection(con);} catch (java.lang.Exception exccon){exccon.printStackTrace();}
+		}
     }    
 
-    public static Customer createNewCustomer(Customer cust) {
-	try {
-	    // Get largest customer ID already in use.
-	    Connection con = getConnection();
-	    
-	    cust.c_discount = (int) (java.lang.Math.random() * 51);
-	    cust.c_balance =0.0;
-	    cust.c_ytd_pmt = 0.0;
-	    // FIXME - Use SQL CURRENT_TIME to do this
-	    cust.c_last_visit = new Date(System.currentTimeMillis());
-	    cust.c_since = new Date(System.currentTimeMillis());
-	    cust.c_login = new Date(System.currentTimeMillis());
-	    cust.c_expiration = new Date(System.currentTimeMillis() + 
-					 7200000);//milliseconds in 2 hours
-	    PreparedStatement insert_customer_row = con.prepareStatement
-		(@sql.createNewCustomer@);
-	    insert_customer_row.setString(4,cust.c_fname);
-	    insert_customer_row.setString(5,cust.c_lname);
-	    insert_customer_row.setString(7,cust.c_phone);
-	    insert_customer_row.setString(8,cust.c_email);
-	    insert_customer_row.setDate(9, new 
-					java.sql.Date(cust.c_since.getTime()));
-	    insert_customer_row.setDate(10, new java.sql.Date(cust.c_last_visit.getTime()));
-	    insert_customer_row.setDate(11, new java.sql.Date(cust.c_login.getTime()));
-	    insert_customer_row.setDate(12, new java.sql.Date(cust.c_expiration.getTime()));
-	    insert_customer_row.setDouble(13, cust.c_discount);
-	    insert_customer_row.setDouble(14, cust.c_balance);
-	    insert_customer_row.setDouble(15, cust.c_ytd_pmt);
-	    insert_customer_row.setDate(16, new java.sql.Date(cust.c_birthdate.getTime()));
-	    insert_customer_row.setString(17, cust.c_data);
-	
-	    cust.addr_id = enterAddress(con, 
-					cust.addr_street1, 
-					cust.addr_street2,
-					cust.addr_city,
-					cust.addr_state,
-					cust.addr_zip,
-					cust.co_name);
-	    PreparedStatement get_max_id = con.prepareStatement
-		(@sql.createNewCustomer.maxId@);
-	    
-	    synchronized(Customer.class) {
-		// Set parameter
-		ResultSet rs = get_max_id.executeQuery();
+    public static Customer createNewCustomer(User user, Customer cust) {
+		Connection con = getConnection();
+		if (con == null) {
+			return null;
+		} // else...
+		try {
+			// Get largest customer ID already in use.
+			//Connection con = getConnection();
+			
+			cust.c_discount = (int) (java.lang.Math.random() * 51);
+			cust.c_balance =0.0;
+			cust.c_ytd_pmt = 0.0;
+			// FIXME - Use SQL CURRENT_TIME to do this
+			cust.c_last_visit = new Date(System.currentTimeMillis());
+			cust.c_since = new Date(System.currentTimeMillis());
+			cust.c_login = new Date(System.currentTimeMillis());
+			cust.c_expiration = new Date(System.currentTimeMillis() + 
+						 7200000);//milliseconds in 2 hours
+			PreparedStatement insert_customer_row = con.prepareStatement
+			(@sql.createNewCustomer@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
+			insert_customer_row.setString(4,cust.c_fname);
+			insert_customer_row.setString(5,cust.c_lname);
+			insert_customer_row.setString(7,cust.c_phone);
+			insert_customer_row.setString(8,cust.c_email);
+			insert_customer_row.setDate(9, new 
+						java.sql.Date(cust.c_since.getTime()));
+			insert_customer_row.setDate(10, new java.sql.Date(cust.c_last_visit.getTime()));
+			insert_customer_row.setDate(11, new java.sql.Date(cust.c_login.getTime()));
+			insert_customer_row.setDate(12, new java.sql.Date(cust.c_expiration.getTime()));
+			insert_customer_row.setDouble(13, cust.c_discount);
+			insert_customer_row.setDouble(14, cust.c_balance);
+			insert_customer_row.setDouble(15, cust.c_ytd_pmt);
+			insert_customer_row.setDate(16, new java.sql.Date(cust.c_birthdate.getTime()));
+			insert_customer_row.setString(17, cust.c_data);
 		
-		// Results
-		rs.next();
-		cust.c_id = rs.getInt(1);//Is 1 the correct index?
-		rs.close();
-		cust.c_id+=1;
-		cust.c_uname = TPCW_Util.DigSyl(cust.c_id, 0);
-		cust.c_passwd = cust.c_uname.toLowerCase();
+			cust.addr_id = enterAddress(user, con, 
+						cust.addr_street1, 
+						cust.addr_street2,
+						cust.addr_city,
+						cust.addr_state,
+						cust.addr_zip,
+						cust.co_name);
+			PreparedStatement get_max_id = con.prepareStatement
+			(@sql.createNewCustomer.maxId@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
+			
+			synchronized(Customer.class) {
+			// Set parameter
+			ResultSet rs = get_max_id.executeQuery();
+			
+			// Results
+			rs.next();
+			cust.c_id = rs.getInt(1);//Is 1 the correct index?
+			rs.close();
+			cust.c_id+=1;
+			cust.c_uname = TPCW_Util.DigSyl(cust.c_id, 0);
+			cust.c_passwd = cust.c_uname.toLowerCase();
 
-		
-		insert_customer_row.setInt(1, cust.c_id);
-		insert_customer_row.setString(2,cust.c_uname);
-		insert_customer_row.setString(3,cust.c_passwd);
-		insert_customer_row.setInt(6, cust.addr_id);
-		insert_customer_row.executeUpdate();
-		con.commit();
-		insert_customer_row.close();
-	    }
-	    get_max_id.close();
-	    returnConnection(con);
-	} catch (java.lang.Exception ex) {
-	    ex.printStackTrace();
-	}
-	return cust;
+			
+			insert_customer_row.setInt(1, cust.c_id);
+			insert_customer_row.setString(2,cust.c_uname);
+			insert_customer_row.setString(3,cust.c_passwd);
+			insert_customer_row.setInt(6, cust.addr_id);
+			insert_customer_row.executeUpdate();
+			con.commit();
+			insert_customer_row.close();
+			}
+			get_max_id.close();
+			//returnConnection(con);
+		} catch (java.lang.Exception ex) {
+			ex.printStackTrace();
+			try {con.rollback();} catch (java.lang.Exception excep){excep.printStackTrace();}
+		} finally {
+			try {returnConnection(con);} catch (java.lang.Exception exccon){exccon.printStackTrace();}
+		}
+		return cust;
     }
 
     //BUY CONFIRM 
 
-    public static BuyConfirmResult doBuyConfirm(int shopping_id,
+    public static BuyConfirmResult doBuyConfirm(User user, int shopping_id,
 						int customer_id,
 						String cc_type,
 						long cc_number,
 						String cc_name,
 						Date cc_expiry,
-						String shipping) {
+						String shipping) 
+	{
 	
-	BuyConfirmResult result = new BuyConfirmResult();
-	try {
-	    Connection con = getConnection();
-	    double c_discount = getCDiscount(con, customer_id);
-	    result.cart = getCart(con, shopping_id, c_discount);
-	    int ship_addr_id = getCAddr(con, customer_id);
-	    result.order_id = enterOrder(con, customer_id, result.cart, ship_addr_id, shipping, c_discount);
-	    enterCCXact(con, result.order_id, cc_type, cc_number, cc_name, cc_expiry, result.cart.SC_TOTAL, ship_addr_id);
-	    clearCart(con, shopping_id);
-	    con.commit();
-	    returnConnection(con);
-	} catch (java.lang.Exception ex) {
-	    ex.printStackTrace();
-	}
-	return result;
+		BuyConfirmResult result = new BuyConfirmResult();
+		Connection con = getConnection();
+		if (con == null) {
+			return null;
+		} // else...
+		try {
+			//Connection con = getConnection();
+			double c_discount = getCDiscount(user, con, customer_id);
+			result.cart = getCart(user, con, shopping_id, c_discount);
+			int ship_addr_id = getCAddr(user, con, customer_id);
+			result.order_id = enterOrder(user, con, customer_id, result.cart, ship_addr_id, shipping, c_discount);
+			enterCCXact(user, con, result.order_id, cc_type, cc_number, cc_name, cc_expiry, result.cart.SC_TOTAL, ship_addr_id);
+			clearCart(user, con, shopping_id);
+			con.commit();
+			//returnConnection(con);
+		} catch (java.lang.Exception ex) {
+			ex.printStackTrace();
+			try {con.rollback();} catch (java.lang.Exception excep){excep.printStackTrace();}
+		} finally {
+			try {returnConnection(con);} catch (java.lang.Exception exccon){exccon.printStackTrace();}
+		}
+		return result;
     }
     
-    public static BuyConfirmResult doBuyConfirm(int shopping_id,
+    public static BuyConfirmResult doBuyConfirm(User user, int shopping_id,
 				    int customer_id,
 				    String cc_type,
 				    long cc_number,
@@ -983,54 +1203,61 @@ public class TPCW_Database {
 				    String zip, String country) {
 	
 	
-	BuyConfirmResult result = new BuyConfirmResult();
-	try {
-	    Connection con = getConnection();
-	    double c_discount = getCDiscount(con, customer_id);
-	    result.cart = getCart(con, shopping_id, c_discount);
-	    int ship_addr_id = enterAddress(con, street_1, street_2, city, state, zip, country);
-	    result.order_id = enterOrder(con, customer_id, result.cart, ship_addr_id, shipping, c_discount);
-	    enterCCXact(con, result.order_id, cc_type, cc_number, cc_name, cc_expiry, result.cart.SC_TOTAL, ship_addr_id);
-	    clearCart(con, shopping_id);
-	    con.commit();
-	    returnConnection(con);
-	} catch (java.lang.Exception ex) {
-	    ex.printStackTrace();
-	}
-	return result;
+		BuyConfirmResult result = new BuyConfirmResult();
+		Connection con = getConnection();
+		if (con == null) {
+			return null;
+		} // else...
+		try {
+			//Connection con = getConnection();
+			double c_discount = getCDiscount(user, con, customer_id);
+			result.cart = getCart(user, con, shopping_id, c_discount);
+			int ship_addr_id = enterAddress(user, con, street_1, street_2, city, state, zip, country);
+			result.order_id = enterOrder(user, con, customer_id, result.cart, ship_addr_id, shipping, c_discount);
+			enterCCXact(user, con, result.order_id, cc_type, cc_number, cc_name, cc_expiry, result.cart.SC_TOTAL, ship_addr_id);
+			clearCart(user, con, shopping_id);
+			con.commit();
+			//returnConnection(con);
+		} catch (java.lang.Exception ex) {
+			ex.printStackTrace();
+			try {con.rollback();} catch (java.lang.Exception excep){excep.printStackTrace();}
+		} finally {
+			try {returnConnection(con);} catch (java.lang.Exception exccon){exccon.printStackTrace();}
+		}
+		return result;
     }
 
 
     //DB query time: .05s
-    public static double getCDiscount(Connection con, int c_id) {
-	double c_discount = 0.0;
-	try {
-	    // Prepare SQL
-	    PreparedStatement statement = con.prepareStatement
-		(@sql.getCDiscount@);
-	    
-	    // Set parameter
-	    statement.setInt(1, c_id);
-	    ResultSet rs = statement.executeQuery();
-	    
-	    // Results
-	    rs.next();
-	    c_discount = rs.getDouble(1);
-	    rs.close();
-	    statement.close();
-	} catch (java.lang.Exception ex) {
-	    ex.printStackTrace();
-	}
-	return c_discount;
+    public static double getCDiscount(User user, Connection con, int c_id) {
+		double c_discount = 0.0;
+		try {
+			// Prepare SQL
+			PreparedStatement statement = con.prepareStatement
+			(@sql.getCDiscount@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
+			
+			// Set parameter
+			statement.setInt(1, c_id);
+			ResultSet rs = statement.executeQuery();
+			
+			// Results
+			rs.next();
+			c_discount = rs.getDouble(1);
+			rs.close();
+			statement.close();
+		} catch (java.lang.Exception ex) {
+			ex.printStackTrace();
+		}
+		return c_discount;
     }
 
     //DB time: .05s
-    public static int getCAddrID(Connection con, int c_id) {
+    public static int getCAddrID(User user, Connection con, int c_id) {
 	int c_addr_id = 0;
 	try {
 	    // Prepare SQL
 	    PreparedStatement statement = con.prepareStatement
-		(@sql.getCAddrId@);
+		(@sql.getCAddrId@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
 	    
 	    // Set parameter
 	    statement.setInt(1, c_id);
@@ -1047,12 +1274,12 @@ public class TPCW_Database {
 	return c_addr_id;
     }
 
-    public static int getCAddr(Connection con, int c_id) {
+    public static int getCAddr(User user, Connection con, int c_id) {
 	int c_addr_id = 0;
 	try {
 	    // Prepare SQL
 	    PreparedStatement statement = con.prepareStatement
-		(@sql.getCAddr@);
+		(@sql.getCAddr@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
 	    
 	    // Set parameter
 	    statement.setInt(1, c_id);
@@ -1069,7 +1296,7 @@ public class TPCW_Database {
 	return c_addr_id;
     }
 
-    public static void enterCCXact(Connection con,
+    public static void enterCCXact(User user, Connection con,
 				   int o_id,        // Order id
 				   String cc_type,
 				   long cc_number,
@@ -1087,7 +1314,7 @@ public class TPCW_Database {
 	try {
 	    // Prepare SQL
 	    PreparedStatement statement = con.prepareStatement
-		(@sql.enterCCXact@);
+		(@sql.enterCCXact@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
 	    
 	    // Set parameter
 	    statement.setInt(1, o_id);           // cx_o_id
@@ -1104,13 +1331,13 @@ public class TPCW_Database {
 	}
     }
     
-    public static void clearCart(Connection con, int shopping_id) {
+    public static void clearCart(User user, Connection con, int shopping_id) {
 	// Empties all the lines from the shopping_cart_line for the
 	// shopping id.  Does not remove the actually shopping cart
 	try {
 	    // Prepare SQL
 	    PreparedStatement statement = con.prepareStatement
-		(@sql.clearCart@);
+		(@sql.clearCart@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
 	    
 	    // Set parameter
 	    statement.setInt(1, shopping_id);
@@ -1121,7 +1348,7 @@ public class TPCW_Database {
 	}
     }
 
-    public static int enterAddress(Connection con,  // Do we need to do this as part of a transaction?
+    public static int enterAddress(User user, Connection con,  // Do we need to do this as part of a transaction?
 				   String street1, String street2,
 				   String city, String state,
 				   String zip, String country) {
@@ -1135,7 +1362,7 @@ public class TPCW_Database {
         // for will be there?
 	try {
 	    PreparedStatement get_co_id = con.prepareStatement
-		(@sql.enterAddress.id@);
+		(@sql.enterAddress.id@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
 	    get_co_id.setString(1, country);
 	    ResultSet rs = get_co_id.executeQuery();
 	    rs.next();
@@ -1146,7 +1373,7 @@ public class TPCW_Database {
 	    //Get address id for this customer, possible insert row in
 	    //address table
 	    PreparedStatement match_address = con.prepareStatement
-		(@sql.enterAddress.match@);
+		(@sql.enterAddress.match@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
 	    match_address.setString(1, street1);
 	    match_address.setString(2, street2);
 	    match_address.setString(3, city);
@@ -1156,7 +1383,7 @@ public class TPCW_Database {
 	    rs = match_address.executeQuery();
 	    if(!rs.next()){//We didn't match an address in the addr table
 		PreparedStatement insert_address_row = con.prepareStatement
-		    (@sql.enterAddress.insert@);
+		    (@sql.enterAddress.insert@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
 		insert_address_row.setString(2, street1);
 		insert_address_row.setString(3, street2);
 		insert_address_row.setString(4, city);
@@ -1165,7 +1392,7 @@ public class TPCW_Database {
 		insert_address_row.setInt(7, addr_co_id);
 
 		PreparedStatement get_max_addr_id = con.prepareStatement
-		    (@sql.enterAddress.maxId@);
+		    (@sql.enterAddress.maxId@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
 		synchronized(Address.class) {
 		    ResultSet rs2 = get_max_addr_id.executeQuery();
 		    rs2.next();
@@ -1189,23 +1416,23 @@ public class TPCW_Database {
     }
 
  
-    public static int enterOrder(Connection con, int customer_id, Cart cart, int ship_addr_id, String shipping, double c_discount) {
+    public static int enterOrder(User user, Connection con, int customer_id, Cart cart, int ship_addr_id, String shipping, double c_discount) {
 	// returns the new order_id
 	int o_id = 0;
 	// - Creates an entry in the 'orders' table 
 	try {
 	    PreparedStatement insert_row = con.prepareStatement
-		(@sql.enterOrder.insert@);
+		(@sql.enterOrder.insert@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
 	    insert_row.setInt(2, customer_id);
 	    insert_row.setDouble(3, cart.SC_SUB_TOTAL);
 	    insert_row.setDouble(4, cart.SC_TOTAL);
 	    insert_row.setString(5, shipping);
 	    insert_row.setInt(6, TPCW_Util.getRandom(7));
-	    insert_row.setInt(7, getCAddrID(con, customer_id));
+	    insert_row.setInt(7, getCAddrID(user, con, customer_id));
 	    insert_row.setInt(8, ship_addr_id);
 
 	    PreparedStatement get_max_id = con.prepareStatement
-		(@sql.enterOrder.maxId@);
+		(@sql.enterOrder.maxId@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
 	    //selecting from order_line is really slow!
 	    synchronized(Order.class) {
 		ResultSet rs = get_max_id.executeQuery();
@@ -1227,30 +1454,30 @@ public class TPCW_Database {
 	while(e.hasMoreElements()) {
 	    // - Creates one or more 'order_line' rows.
 	    CartLine cart_line = (CartLine) e.nextElement();
-	    addOrderLine(con, counter, o_id, cart_line.scl_i_id, 
+	    addOrderLine(user, con, counter, o_id, cart_line.scl_i_id, 
 			 cart_line.scl_qty, c_discount, 
 			 TPCW_Util.getRandomString(20, 100));
 	    counter++;
 
 	    // - Adjusts the stock for each item ordered
-	    int stock = getStock(con, cart_line.scl_i_id);
+	    int stock = getStock(user, con, cart_line.scl_i_id);
 	    if ((stock - cart_line.scl_qty) < 10) {
-		setStock(con, cart_line.scl_i_id, 
+		setStock(user, con, cart_line.scl_i_id, 
 			 stock - cart_line.scl_qty + 21);
 	    } else {
-		setStock(con, cart_line.scl_i_id, stock - cart_line.scl_qty);
+		setStock(user, con, cart_line.scl_i_id, stock - cart_line.scl_qty);
 	    }
 	}
 	return o_id;
     }
     
-    public static void addOrderLine(Connection con, 
+    public static void addOrderLine( User user,Connection con, 
 				    int ol_id, int ol_o_id, int ol_i_id, 
 				    int ol_qty, double ol_discount, String ol_comment) {
 	int success = 0;
 	try {
 	    PreparedStatement insert_row = con.prepareStatement
-		(@sql.addOrderLine@);
+		(@sql.addOrderLine@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
 	    
 	    insert_row.setInt(1, ol_id);
 	    insert_row.setInt(2, ol_o_id);
@@ -1265,11 +1492,11 @@ public class TPCW_Database {
 	}
     }
 
-    public static int getStock(Connection con, int i_id) {
+    public static int getStock(User user, Connection con, int i_id) {
 	int stock = 0;
 	try {
 	    PreparedStatement get_stock = con.prepareStatement
-		(@sql.getStock@);
+		(@sql.getStock@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
 	    
 	    // Set parameter
 	    get_stock.setInt(1, i_id);
@@ -1286,10 +1513,10 @@ public class TPCW_Database {
 	return stock;
     }
 
-    public static void setStock(Connection con, int i_id, int new_stock) {
+    public static void setStock(User user, Connection con, int i_id, int new_stock) {
 	try {
 	    PreparedStatement update_row = con.prepareStatement
-		(@sql.setStock@);
+		(@sql.setStock@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
 	    update_row.setInt(1, new_stock);
 	    update_row.setInt(2, i_id);
 	    update_row.executeUpdate();
@@ -1299,60 +1526,67 @@ public class TPCW_Database {
 	}
     }
 
-    public static void verifyDBConsistency(){
-	try {
-	    Connection con = getConnection();
-	    int this_id;
-	    int id_expected = 1;
-	    //First verify customer table
-	    PreparedStatement get_ids = con.prepareStatement
-		(@sql.verifyDBConsistency.custId@);
-	    ResultSet rs = get_ids.executeQuery();
-	    while(rs.next()){
-	        this_id = rs.getInt("c_id");
-		while(this_id != id_expected){
-		    System.out.println("Missing C_ID " + id_expected);
-		    id_expected++;
-		}
-		id_expected++;
-	    }
-	    
-	    id_expected = 1;
-	    //Verify the item table
-	    get_ids = con.prepareStatement
-		(@sql.verifyDBConsistency.itemId@);
-	    rs = get_ids.executeQuery();
-	    while(rs.next()){
-	        this_id = rs.getInt("i_id");
-		while(this_id != id_expected){
-		    System.out.println("Missing I_ID " + id_expected);
-		    id_expected++;
-		}
-		id_expected++;
-	    }
+    public static void verifyDBConsistency(User user){
+		Connection con = getConnection();
+		if (con == null) {
+			return;
+		} // else...
+		try {
+			//Connection con = getConnection();
+			int this_id;
+			int id_expected = 1;
+			//First verify customer table
+			PreparedStatement get_ids = con.prepareStatement
+			(@sql.verifyDBConsistency.custId@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
+			ResultSet rs = get_ids.executeQuery();
+			while(rs.next()){
+				this_id = rs.getInt("c_id");
+			while(this_id != id_expected){
+				System.out.println("Missing C_ID " + id_expected);
+				id_expected++;
+			}
+			id_expected++;
+			}
+			
+			id_expected = 1;
+			//Verify the item table
+			get_ids = con.prepareStatement
+			(@sql.verifyDBConsistency.itemId@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
+			rs = get_ids.executeQuery();
+			while(rs.next()){
+				this_id = rs.getInt("i_id");
+			while(this_id != id_expected){
+				System.out.println("Missing I_ID " + id_expected);
+				id_expected++;
+			}
+			id_expected++;
+			}
 
-	    id_expected = 1;
-	    //Verify the address table
-	    get_ids = con.prepareStatement
-		(@sql.verifyDBConsistency.addrId@);
-	    rs = get_ids.executeQuery();
-	    while(rs.next()){
-	        this_id = rs.getInt("addr_id");
-		//		System.out.println(this_cid+"\n");
-		while(this_id != id_expected){
-		    System.out.println("Missing ADDR_ID " + id_expected);
-		    id_expected++;
-		}
-		id_expected++;
-	    }
-	    
-	    
+			id_expected = 1;
+			//Verify the address table
+			get_ids = con.prepareStatement
+			(@sql.verifyDBConsistency.addrId@, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
+			rs = get_ids.executeQuery();
+			while(rs.next()){
+				this_id = rs.getInt("addr_id");
+			//		System.out.println(this_cid+"\n");
+			while(this_id != id_expected){
+				System.out.println("Missing ADDR_ID " + id_expected);
+				id_expected++;
+			}
+			id_expected++;
+			}
+			
+			
 
-	    con.commit();
-	    returnConnection(con);
-	} catch (java.lang.Exception ex) {
-	    ex.printStackTrace();
+			con.commit();
+			returnConnection(con);
+		} catch (java.lang.Exception ex) {
+			ex.printStackTrace();
+			try {con.rollback();} catch (java.lang.Exception excep){excep.printStackTrace();}
+		} finally {
+			try {returnConnection(con);} catch (java.lang.Exception exccon){exccon.printStackTrace();}
+		}
 	}
-    }
 }
 
